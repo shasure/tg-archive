@@ -93,7 +93,7 @@ class Build:
             self._build_rss(rss_entries, "index.rss", "index.atom")
 
     def load_template(self, fname):
-        with open(fname, "r") as f:
+        with open(fname, "r", encoding="utf-8") as f:
             self.template = Template(f.read())
 
     def make_filename(self, month, page) -> str:
