@@ -90,7 +90,7 @@
 							<span class="title">{{ day }} <span class="count">({{ dayline[m.date.strftime("%Y-%m-%d")].count }} messages)</span></span>
 						</li>
 					{% endif %}
-					<li class="message type-{{ m.type }}" id="{{ m.id }}">
+					<li class="message type-{{ m.action }}" id="{{ m.id }}">
 						<div class="avatar">
 							{% if m.user.avatar %}
 								<img src="{{ config.media_dir }}/{{ m.user.avatar }}" alt="" />
@@ -99,13 +99,23 @@
 
 						<div class="body">
 							<div class="meta">
-								<a href="{{ config.telegram_url.format(id=m.user.username) }}" class="username" rel="noreferer nopener nofollow">
-									{% if config.user_fullname %}
-										{{ m.user.first_name }} {{ m.user.last_name }} (@{{ m.user.username }})
-									{% else %}
-										@{{ m.user.username }}
-									{% endif %}
-								</a>
+								{% if m.user.username %}
+									<a href="{{ config.telegram_url.format(id=m.user.username)}}" class="username" rel="noreferer nopener nofollow">
+										{% if config.user_fullname %}
+											{{ m.user.first_name }} {{ m.user.last_name }} (id:{{ m.user.username }})
+										{% else %}
+											@{{ m.user.username }}
+										{% endif %}
+									</a>
+								{% else %}
+									<a  class="userid" rel="noreferer nopener nofollow">
+										{% if config.user_fullname %}
+											{{ m.user.first_name }} {{ m.user.last_name }} (id:{{ m.user.id }})
+										{% else %}
+											id:{{ m.user.id }}
+										{% endif %}
+									</a>
+								{% endif %}
 
 								{% if m.reply_to %}
 									<a class="reply" href="{{ page_ids[m.reply_to] }}#{{ m.reply_to }}">↶ Reply to #{{ m.reply_to }}</a>
@@ -122,12 +132,21 @@
 								<span class="date">{{ m.date.strftime("%I:%M %p, %d %b %Y") }}</span>
 							</div>
 							<div class="text">
-								{% if m.type == "message" %}
+								{% if not m.action.type %}
 									{{ nl2br(m.content | escape) | safe | urlize }}
 								{% else %}
-									{% if m.type == "user_joined" %}
+									{% if m.action.type == "user_joined" %}
+										{% if m.action.to_user.username %}
+											<a href="{{ config.telegram_url.format(id=m.action.to_user.username)}}" class="username" rel="noreferer nopener nofollow">
+												@{{ m.action.to_user.username }}
+											</a>
+										{% else %}
+											<a class="userid" rel="noreferer nopener nofollow">
+												id:{{ m.action.to_user.id }}
+											</a>
+										{% endif %}
 										Joined.
-									{% elif m.type == "user_left" %}
+									{% elif m.action.type == "user_left" %}
 										Left.
 									{% endif %}
 								{% endif %}

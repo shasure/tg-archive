@@ -5,9 +5,9 @@ import shutil
 import sys
 import yaml
 
-from .db import DB
+from .mongodb import MongoDB
 
-__version__ = "0.3.6"
+__version__ = "0.3.6.1"
 
 logging.basicConfig(format="%(asctime)s: %(message)s",
                     level=logging.INFO)
@@ -39,11 +39,24 @@ _CONFIG = {
     "page_title": "{date} - @{group} Telegram message archive."
 }
 
+_CONFIG_YAML = "config.yaml"
+_STATIC = "static"
+_TEMPLATE_HTML = "template.html"
 
-def get_config(path):
+
+def get_config(path, args):
     config = {}
+    # config priority : args > config.yaml > _CONFIG
     with open(path, "r") as f:
         config = {**_CONFIG, **yaml.safe_load(f.read())}
+    # update config dict from args
+    if hasattr(args, 'publish_dir') and args.publish_dir:
+        config['publish_dir'] = args.publish_dir
+    if hasattr(args, 'group') and args.group:
+        config['group'] = args.group
+    config['user'] = args.user if hasattr(args, 'user') else None
+    config['message'] = args.message if hasattr(args, 'message') else None
+
     return config
 
 
@@ -55,31 +68,52 @@ def main():
 
     p.add_argument("-c", "--config", action="store", type=str, default="config.yaml",
                    dest="config", help="path to the config file")
-    p.add_argument("-d", "--data", action="store", type=str, default="data.sqlite",
+    p.add_argument("-d", "--data", action="store", type=str, default="mongodb://localhost:27017/",
                    dest="data", help="path to the SQLite data file to store messages")
+    p.add_argument("-g", "--group", action="store", type=str, default="",
+                   dest="group", help="Telegram channel / group name or id to import. Group should be public group or "
+                                      "your user account that was used to creat the API ID should be a member of this"
+                                      " group.")
     p.add_argument("-se", "--session", action="store", type=str, default="session.session",
                    dest="session", help="path to the session file")
     p.add_argument("-v", "--version", action="store_true", dest="version", help="display version")
 
-    n = p.add_argument_group("new")
-    n.add_argument("-n", "--new", action="store_true",
-                   dest="new", help="initialize a new site")
-    n.add_argument("-p", "--path", action="store", type=str, default="example",
-                   dest="path", help="path to create the site")
+    # sub command
+    subparsers = p.add_subparsers(help="subcommand")
 
-    s = p.add_argument_group("sync")
-    s.add_argument("-s", "--sync", action="store_true",
-                   dest="sync", help="sync data from telegram group to the local DB")
-    s.add_argument("-id", "--id", action="store", type=int, nargs="+",
-                   dest="id", help="sync (or update) data for specific message ids")
+    n = subparsers.add_parser("new", help="initialize a new site")
+    n.set_defaults(cmd='new')  # set cmd to identity sub command
+    n.add_argument("-p", "--path", action="store", type=str, default="",
+                   dest="path", help="path to create config.yaml file")
 
-    b = p.add_argument_group("build")
+    s = subparsers.add_parser("sync", help="sync data from telegram group to the local DB")
+    s.set_defaults(cmd='sync')
+    s.add_argument("-u", "--user", action="store_true",
+                   dest="user", help="sync group user from telegram group to the local DB")
+    s.add_argument("-m", "--message", action="store_true",
+                   dest="message", help="sync group message from telegram group to the local DB")
+    s.add_argument("-m_id", "--message_id", action="store", type=int, nargs="+",
+                   dest="message_id", help="sync (or update) data for specific message ids")
+
+    b = subparsers.add_parser("build", help="build the static site")
+    b.set_defaults(cmd='build')
     b.add_argument("-b", "--build", action="store_true",
                    dest="build", help="build the static site")
-    b.add_argument("-t", "--template", action="store", type=str, default="template.html",
-                   dest="template", help="path to the template file")
-    b.add_argument("-o", "--output", action="store", type=str, default="site",
-                   dest="output", help="path to the output directory")
+    b.add_argument("-t", "--template", action="store", type=str, default="",
+                   dest="template", help="path to the template file. If empty, use default template.html")
+    b.add_argument("-pub", "--publish_dir", action="store", type=str, default="",
+                   dest="publish_dir", help="path to the output directory")
+
+    bp = subparsers.add_parser("backup", help="backup all dialogs in current telegram account")
+    bp.set_defaults(cmd='backup')
+    bp.add_argument("-s", "--sync", action="store_true",
+                    dest="sync", help="sync data from telegram group to the local DB")
+    bp.add_argument("-u", "--user", action="store_true",
+                    dest="user", help="sync group user from telegram group to the local DB")
+    bp.add_argument("-m", "--message", action="store_true",
+                    dest="message", help="sync group message from telegram group to the local DB")
+    bp.add_argument("-m_id", "--message_id", action="store", type=int, nargs="+",
+                    dest="message_id", help="sync (or update) data for specific message ids")
 
     args = p.parse_args(args=None if sys.argv[1:] else ['--help'])
 
@@ -88,35 +122,39 @@ def main():
         quit()
 
     # Setup new site.
-    elif args.new:
+    elif args.cmd == "new":
         exdir = os.path.join(os.path.dirname(__file__), "example")
         if not os.path.isdir(exdir):
             logging.error("unable to find bundled example directory")
             quit(1)
 
+        dst_fp = os.path.join(args.path, _CONFIG_YAML) if args.path else _CONFIG_YAML
+        if os.path.exists(dst_fp):
+            logging.error("file {} already exists.".format(dst_fp))
+            quit(1)
         try:
-            shutil.copytree(exdir, args.path)
+            shutil.copyfile(os.path.join(exdir, _CONFIG_YAML), dst_fp)
         except FileExistsError:
             logging.error(
-                "the directory '{}' already exists".format(args.path))
+                "copyfile '{}' to '{}' failed".format(_CONFIG_YAML, dst_fp))
             quit(1)
         except:
             raise
 
-        logging.info("created directory '{}'".format(args.path))
+        logging.info("create config file '{}'".format(dst_fp))
 
     # Sync from Telegram.
-    elif args.sync:
+    elif args.cmd == "sync":
         # Import because the Telegram client import is quite heavy.
         from .sync import Sync
 
-        cfg = get_config(args.config)
+        cfg = get_config(args.config, args)
         logging.info("starting Telegram sync (batch_size={}, limit={}, wait={})".format(
             cfg["fetch_batch_size"], cfg["fetch_limit"], cfg["fetch_wait"]
         ))
 
         try:
-            Sync(cfg, args.session, DB(args.data)).sync(args.id)
+            Sync(cfg, args.session, MongoDB(args.data, cfg['db_timezone'])).sync(args.message_id)
         except KeyboardInterrupt as e:
             logging.info("sync cancelled manually")
             quit()
@@ -124,12 +162,32 @@ def main():
             raise
 
     # Build static site.
-    elif args.build:
+    elif args.cmd == "build":
         from .build import Build
 
         logging.info("building site")
-        b = Build(get_config(args.config), DB(args.data))
+        cfg = get_config(args.config, args)
+        b = Build(cfg, MongoDB(args.data, cfg['db_timezone']))
         b.load_template(args.template)
         b.build()
 
-        logging.info("published to directory '{}'".format(args.output))
+        logging.info("published to directory '{}'".format(cfg['publish_dir']))
+
+    elif args.cmd == "backup":
+        from .backup import Backup
+        from .sync import Sync
+
+        cfg = get_config(args.config, args)
+        logging.info("starting Telegram sync (batch_size={}, limit={}, wait={})".format(
+            cfg["fetch_batch_size"], cfg["fetch_limit"], cfg["fetch_wait"]
+        ))
+        logging.info("starting backup current all dialogs in this session.")
+
+        try:
+            s = Sync(cfg, args.session, MongoDB(args.data, cfg['db_timezone']))
+            Backup(s).backup()
+        except KeyboardInterrupt as e:
+            logging.info("sync cancelled manually")
+            quit()
+        except:
+            raise

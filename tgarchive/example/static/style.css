@@ -254,6 +254,10 @@ ul {
 			margin-right: auto;
 			color: inherit;
 		}
+		.messages .meta .userid {
+			margin-right: auto;
+			color: inherit;
+		}
 		.messages .meta .reply,
 		.messages .meta .id {
 			color: var(--light);
@@ -358,6 +362,10 @@ ul {
 		display: block;
 	}
 	.messages .meta .username {
+		display: block;
+		margin-bottom: 10px;
+	}
+	.messages .meta .userid {
 		display: block;
 		margin-bottom: 10px;
 	}

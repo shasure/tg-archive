@@ -8,8 +8,8 @@ import shutil
 
 from feedgen.feed import FeedGenerator
 from jinja2 import Template
-
-from .db import User, Message
+from . import _TEMPLATE_HTML, _STATIC, __version__
+from .basedb import *
 
 
 _NL2BR = re.compile(r"\n\n+")
@@ -34,7 +34,16 @@ class Build:
         # (Re)create the output directory.
         self._create_publish_dir()
 
-        timeline = list(self.db.get_timeline())
+        try:
+            group_id = int(self.config['group'])
+        except:
+            logging.warning("'{}' is username, try to lookup username from db.".format(self.config['group']))
+            group_id = self.db.get_channel_id_by_username(self.config['group'])
+        if not group_id:
+            logging.warning("'{}' not find in database. Please execute sync first.".format(self.config['group']))
+            quit(1)
+
+        timeline = list(self.db.get_timeline(group_id))
         if len(timeline) == 0:
             logging.info("no data found to publish site")
             quit()
@@ -50,18 +59,18 @@ class Build:
         for month in timeline:
             # Get the days + message counts for the month.
             dayline = OrderedDict()
-            for d in self.db.get_dayline(month.date.year, month.date.month, self.config["per_page"]):
+            for d in self.db.get_dayline(group_id, month.date.year, month.date.month, self.config["per_page"]):
                 dayline[d.slug] = d
 
             # Paginate and fetch messages for the month until the end..
             page = 0
             last_id = 0
             total = self.db.get_message_count(
-                month.date.year, month.date.month)
+                group_id, month.date.year, month.date.month)
             total_pages = math.ceil(total / self.config["per_page"])
 
             while True:
-                messages = list(self.db.get_messages(month.date.year, month.date.month,
+                messages = list(self.db.get_messages(group_id, month.date.year, month.date.month,
                                                      last_id, self.config["per_page"]))
 
                 if len(messages) == 0:
@@ -76,6 +85,21 @@ class Build:
                 # to link to replies in arbitrary positions across months, paginated pages.
                 for m in messages:
                     self.page_ids[m.id] = fname
+                    # Extract media from MongoDB to Native file system
+                    publish_media_dir = os.path.join(self.config["publish_dir"], self.config["media_dir"])
+
+                    avatar_fn = os.path.join(publish_media_dir, m.user.avatar) if m.user and m.user.avatar else None
+                    if avatar_fn and not os.path.exists(avatar_fn):
+                        self.db.gridfs_avatar_to_nativafs(BaseDB.USER, self.config["avatar_size"],
+                                                          m.user.avatar, avatar_fn)
+
+                    media_fn = os.path.join(publish_media_dir, m.media.url) if m.media and m.media.url else None
+                    if media_fn and not os.path.exists(media_fn):
+                        self.db.gridfs_media_to_nativafs(BaseDB.MESSAGE, m.media.url, media_fn)
+
+                    thumb_fn = os.path.join(publish_media_dir, m.media.thumb) if m.media and m.media.thumb else None
+                    if thumb_fn and not os.path.exists(thumb_fn):
+                        self.db.gridfs_media_to_nativafs(BaseDB.MESSAGE, m.media.thumb, thumb_fn)
 
                 if self.config["publish_rss_feed"]:
                     rss_entries.extend(messages)
@@ -93,7 +117,20 @@ class Build:
             self._build_rss(rss_entries, "index.rss", "index.atom")
 
     def load_template(self, fname):
-        with open(fname, "r", encoding="utf-8") as f:
+        if fname:
+            template_fn = fname
+        else:
+            exdir = os.path.join(os.path.dirname(__file__), "example")
+            if not os.path.isdir(exdir):
+                logging.error("unable to find bundled example directory")
+                quit(1)
+
+            template_fn = os.path.join(exdir, _TEMPLATE_HTML)
+            if not os.path.exists(template_fn):
+                logging.error("{} not found in package.".format(template_fn))
+                quit(1)
+
+        with open(template_fn, "r", encoding="utf-8") as f:
             self.template = Template(f.read())
 
     def make_filename(self, month, page) -> str:
@@ -117,10 +154,15 @@ class Build:
             f.write(html)
 
     def _build_rss(self, messages, rss_file, atom_file):
+        version = __version__
+        try:
+            version = pkg_resources.get_distribution("tg-archive").version
+        except:
+            pass
         f = FeedGenerator()
         f.id(self.config["site_url"])
         f.generator(
-            "tg-archive {}".format(pkg_resources.get_distribution("tg-archive").version))
+            "tg-archive {}".format(version))
         f.link(href=self.config["site_url"], rel="alternate")
         f.title(self.config["site_name"].format(group=self.config["group"]))
         f.subtitle(self.config["site_description"])
@@ -163,16 +205,23 @@ class Build:
         # Re-create the output directory.
         os.mkdir(pubdir)
 
+        target_dir = os.path.join(pubdir, self.config["static_dir"])
+        static_dir = os.path.join(os.path.dirname(__file__), "example", _STATIC)
+        if not os.path.exists(static_dir):
+            logging.error("unable to find bundled example/static directory")
+            quit(1)
         # Copy the static directory into the output directory.
-        for f in [self.config["static_dir"]]:
-            target = os.path.join(pubdir, f)
+        for f in [static_dir]:
             if os.path.isfile(f):
-                shutil.copyfile(f, target)
+                shutil.copyfile(f, target_dir)
             else:
-                shutil.copytree(f, target)
+                shutil.copytree(f, target_dir)
 
-        # If media downloading is enabled, copy the media directory.
-        mediadir = self.config["media_dir"]
-        if os.path.exists(mediadir):
-            shutil.copytree(mediadir, os.path.join(
-                pubdir, os.path.basename(mediadir)))
+        # # If media downloading is enabled, copy the media directory.
+        # mediadir = self.config["media_dir"]
+        # if os.path.exists(mediadir):
+        #     shutil.copytree(mediadir, os.path.join(
+        #         pubdir, os.path.basename(mediadir)))
+
+        # create media_dir in pubdir
+        os.mkdir(os.path.join(pubdir, os.path.basename(self.config["media_dir"])))

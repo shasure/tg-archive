@@ -9,10 +9,14 @@ api_hash: "your_api_hash"
 group: "your_group_name"
 
 # Avatars and media will be downloaded into media_dir.
-download_media: True
-download_avatars: True
+download_media: False
+download_avatars: False
 avatar_size: [64, 64] # Width, Height.
 media_dir: "media"
+
+# group user update strategy
+# remove all group users in db by group id before synchronization
+groupsuser_remove_before_sync: True
 
 # These should be configured carefully to not get rate limited by Telegram.
 # Number of messages to fetch in one batch.
@@ -34,6 +38,11 @@ show_day_index: True
 # URL to link Telegram group names and usernames.
 telegram_url: "https://t.me/{id}"
 
+# MongoDB url
+data: ""
+# MongoDB client timezone
+db_timezone: 'Asia/Shanghai'
+
 # IMPORTANT: Telegram shows the full name on your (API key holder's)
 # phonebook for users who are in your phonebook.
 show_sender_fullname: False
@@ -47,3 +56,4 @@ site_name: "@{group} - Telegram group archive"
 site_description: "Public archive of Telegram messages."
 meta_description: "@{group} {date} - Telegram message archive."
 page_title: "Page {page} - {date} @{group} Telegram message archive."
+user_fullname: False
