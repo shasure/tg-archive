@@ -1,11 +1,4 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
-"""
-Author : zsy
-Date : 2021/06/21"""
 import logging
-
-from .sync import Sync
 
 
 class Backup:

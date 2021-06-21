@@ -104,6 +104,13 @@ def main():
     b.add_argument("-pub", "--publish_dir", action="store", type=str, default="",
                    dest="publish_dir", help="path to the output directory")
 
+    e = subparsers.add_parser("export", help="export channel or groupuser")
+    e.set_defaults(cmd='export')
+    e.add_argument("-s", "--sync", action="store_true",
+                    dest="sync", help="sync data from telegram group to the local DB")
+    e.add_argument("-pub", "--publish_dir", action="store", type=str, default="",
+                   dest="publish_dir", help="path to the output directory")
+
     bp = subparsers.add_parser("backup", help="backup all dialogs in current telegram account")
     bp.set_defaults(cmd='backup')
     bp.add_argument("-s", "--sync", action="store_true",
@@ -114,6 +121,7 @@ def main():
                     dest="message", help="sync group message from telegram group to the local DB")
     bp.add_argument("-m_id", "--message_id", action="store", type=int, nargs="+",
                     dest="message_id", help="sync (or update) data for specific message ids")
+
 
     args = p.parse_args(args=None if sys.argv[1:] else ['--help'])
 
@@ -172,6 +180,14 @@ def main():
         b.build()
 
         logging.info("published to directory '{}'".format(cfg['publish_dir']))
+
+    elif args.cmd == "export":
+        from .export import Export
+        cfg = get_config(args.config, args)
+        logging.info("starting export channel and group users.")
+        Export(cfg, MongoDB(args.data, cfg['db_timezone'])).export()
+
+        logging.info("published channel / user info to directory '{}'".format(cfg['publish_dir']))
 
     elif args.cmd == "backup":
         from .backup import Backup

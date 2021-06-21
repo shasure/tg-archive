@@ -297,17 +297,25 @@ class MongoDB(BaseDB):
         return False
 
     def check_channel_exists(self, cid):
-        user_iter = self.channel_col.find({'id': cid})
-        user = list(user_iter)
-        if user:
+        channel_iter = self.channel_col.find({'id': cid})
+        channel = list(channel_iter)
+        if channel:
             return True
         return False
 
     def get_channel_id_by_username(self, ch_username):
-        user_iter = self.channel_col.find({'username': ch_username})
-        user = list(user_iter)
-        if user:
-            return user[0]['id']
+        channel_iter = self.channel_col.find({'username': ch_username})
+        channel = list(channel_iter)
+        if channel:
+            return channel[0]['id']
         return None
+
+    def query_channel_by_id(self, ch_id):
+        channel_iter = self.channel_col.find({'id': ch_id}, {"_id": 0})
+        return channel_iter
+
+    def query_groupuser_by_id(self, ch_id):
+        user_iter = self.groupuser_col.find({'group_id': ch_id}, {"_id": 0})
+        return user_iter
 
 

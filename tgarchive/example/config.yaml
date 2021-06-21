@@ -39,7 +39,7 @@ show_day_index: True
 telegram_url: "https://t.me/{id}"
 
 # MongoDB url
-data: ""
+data: "mongodb://localhost:27017/"
 # MongoDB client timezone
 db_timezone: 'Asia/Shanghai'
 

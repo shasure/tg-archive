@@ -443,32 +443,31 @@ class GroupUserSync:
         self.sync_utils = SyncUtils(self.config, self.client, self.db)
 
     def sync(self):
-        tar_link = self.group_id
         # 判断是group还是broadcast channel
-        full = self.client(functions.channels.GetFullChannelRequest(tar_link))
+        full = self.client(functions.channels.GetFullChannelRequest(self.group_id))
         full_channel = full.full_chat  # full_channel is a ChannelFull
         channel = next(c for c in full.chats if c.id == full_channel.id)
         if channel.broadcast:  # 目标是broadcast channel
-            logging.info('{}是broadcast channel，订阅人数 {}'.format(tar_link, full_channel.participants_count))  # subscriber人数
+            logging.info('{}是broadcast channel，订阅人数 {}'.format(self.group_id, full_channel.participants_count))  # subscriber人数
             if full_channel.linked_chat_id:  # 是否有相关联的group
                 linked_group = next(c for c in full.chats if c.id == full_channel.linked_chat_id)
                 logging.info('关联group的title: {}  username: {}'.format(linked_group.title, linked_group.username))
-                tar_link = full_channel.linked_chat_id  # 更换拉取members的目标
+                self.group_id = full_channel.linked_chat_id  # 更换拉取members的目标
             else:
-                logging.info('broadcast channel {} 没有相关联的group'.format(tar_link))
+                logging.info('broadcast channel {} 没有相关联的group'.format(self.group_id))
                 return
         elif channel.megagroup:  # 目标是group
-            logging.info('{}是group，group人数 {}'.format(tar_link, full_channel.participants_count))
+            logging.info('{}是group，group人数 {}'.format(self.group_id, full_channel.participants_count))
         else:
-            raise Exception('{} broadcast megagroup同时为False，请手动检查'.format(tar_link))
+            raise Exception('{} broadcast megagroup同时为False，请手动检查'.format(self.group_id))
 
         # 获取members
-        users = self.client.get_participants(tar_link)  # list of User
+        users = self.client.get_participants(self.group_id)  # list of User
         logging.info('获取member {} 人'.format(len(users)))
 
         # insert to db
         if self.config['groupsuser_remove_before_sync']:
-            self.db.del_groupuser_by_groupid(tar_link)
+            self.db.del_groupuser_by_groupid(self.group_id)
         for user in users:
             u = self._get_groupuser(user)
             self.db.insert_groupuser(u)
