@@ -76,15 +76,14 @@ class Build:
                 if len(messages) == 0:
                     break
 
-                last_id = messages[-1].id
-
+                last_id = messages[-1].message_id
                 page += 1
                 fname = self.make_filename(month, page)
 
                 # Collect the message ID -> page name for all messages in the set
                 # to link to replies in arbitrary positions across months, paginated pages.
                 for m in messages:
-                    self.page_ids[m.id] = fname
+                    self.page_ids[m.message_id] = fname
                     # Extract media from MongoDB to Native file system
                     publish_media_dir = os.path.join(self.config["publish_dir"], self.config["media_dir"])
 
@@ -169,10 +168,10 @@ class Build:
 
         for m in messages:
             url = "{}/{}#{}".format(self.config["site_url"],
-                                    self.page_ids[m.id], m.id)
+                                    self.page_ids[m.message_id], m.message_id)
             e = f.add_entry()
             e.id(url)
-            e.title("@{} on {} (#{})".format(m.user.username, m.date, m.id))
+            e.title("@{} on {} (#{})".format(m.user.username, m.date, m.message_id))
             e.description(self._make_abstract(m))
 
             if m.media and m.media.url:

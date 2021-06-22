@@ -64,8 +64,8 @@ class Media:
 
 @dataclass
 class Message:
-    group_id: int
     id: int
+    message_id: int
     action: Action
     date: datetime.datetime
     edit_date: datetime.datetime

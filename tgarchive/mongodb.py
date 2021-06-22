@@ -41,29 +41,29 @@ class MongoDB(BaseDB):
 
     def _create_index(self):
         # unique index
-        self.message_col.create_index([("group_id", pymongo.ASCENDING), ("id", pymongo.ASCENDING)], unique=True)
+        self.message_col.create_index([("id", pymongo.ASCENDING), ("message_id", pymongo.ASCENDING)], unique=True)
         self.user_col.create_index([("id", pymongo.ASCENDING)], unique=True)
         self.channel_col.create_index([("id", pymongo.ASCENDING), ("username", pymongo.ASCENDING)], unique=True)
         self.groupuser_col.create_index([("group_id", pymongo.ASCENDING), ("user.id", pymongo.ASCENDING)], unique=True)
 
-    def get_last_message_id(self, group_id) -> [int, datetime]:
-        last_message = self.message_col.find({'group_id': group_id}, {"id": 1, "date": 1}) \
-            .sort([('id', pymongo.DESCENDING)]).limit(1)
+    def get_last_message_id(self, id) -> [int, datetime]:
+        last_message = self.message_col.find({'id': id}, {"message_id": 1, "date": 1}) \
+            .sort([('message_id', pymongo.DESCENDING)]).limit(1)
         last_message_l = list(last_message)
         if not last_message_l:
             return 0, None
 
         last_message = last_message_l[0]
-        id, date = last_message['id'], last_message['date']
+        id, date = last_message['message_id'], last_message['date']
         return id, date
 
-    def get_timeline(self, group_id) -> Iterator[Month]:
+    def get_timeline(self, id) -> Iterator[Month]:
         """
         Get the list of all unique yyyy-mm month groups and
         the corresponding message counts per period in chronological order.
         """
         m_cursor = self.message_col.aggregate([
-            {"$match": {"group_id": group_id}},
+            {"$match": {"id": id}},
             {
                 "$group": {
                     "_id": {
@@ -73,10 +73,10 @@ class MongoDB(BaseDB):
                     },
                     "count": {"$sum": 1},
                     "date": {"$first": "$date"},
-                    "id": {"$first": "$id"},
+                    "message_id": {"$first": "$message_id"},
                 }
             },
-            {"$sort": {"id": 1}},
+            {"$sort": {"message_id": 1}},
             {"$project": {"count": 1, "date": 1}}
         ])
         for r in m_cursor:
@@ -85,7 +85,7 @@ class MongoDB(BaseDB):
                         label=r['date'].strftime("%b %Y"),
                         count=r['count'])
 
-    def get_dayline(self, group_id, year, month, limit=500) -> Iterator[Day]:
+    def get_dayline(self, id, year, month, limit=500) -> Iterator[Day]:
         """
         Get the list of all unique yyyy-mm-dd days corresponding
         message counts and the page number of the first occurrence of
@@ -97,7 +97,7 @@ class MongoDB(BaseDB):
                 {
                     "$expr": {
                         "$and": [
-                            {"group_id": group_id},
+                            {"id": id},
                             {"$eq":
                                  ["{}{:02d}".format(year, month),
                                   {
@@ -145,7 +145,7 @@ class MongoDB(BaseDB):
                       count=r['count'],
                       page=r['page'])
 
-    def get_messages(self, group_id, year, month, last_id=0, limit=500) -> Iterator[Message]:
+    def get_messages(self, id, year, month, last_id=0, limit=500) -> Iterator[Message]:
         # date = "{}{:02d}".format(year, month)
 
         m_cursor = self.message_col.aggregate([
@@ -153,7 +153,7 @@ class MongoDB(BaseDB):
                 {
                     "$expr": {
                         "$and": [
-                            {"$eq": ["$group_id", group_id]},
+                            {"$eq": ["$id", id]},
                             {"$eq":
                                  ["{}{:02d}".format(year, month),
                                   {
@@ -164,12 +164,12 @@ class MongoDB(BaseDB):
                                       }
                                   }]
                              },
-                            {"$gt": ["$id", last_id]}
+                            {"$gt": ["$message_id", last_id]}
                         ]
                     }
                 }
             },
-            {"$sort": {"id": 1}},
+            {"$sort": {"message_id": 1}},
             {"$limit": limit},
             {"$lookup": {
                 "from": "user",
@@ -191,7 +191,7 @@ class MongoDB(BaseDB):
         for r in m_cursor:
             yield self._make_message(r)
 
-    def get_message_count(self, group_id, year, month) -> int:
+    def get_message_count(self, id, year, month) -> int:
         date = "{}{:02d}".format(year, month)
 
         m_cursor = self.message_col.aggregate([
@@ -199,7 +199,7 @@ class MongoDB(BaseDB):
                 {
                     "$expr": {
                         "$and": [
-                            {"group_id": group_id},
+                            {"id": id},
                             {"$eq":
                                  [date,
                                   {
@@ -227,7 +227,7 @@ class MongoDB(BaseDB):
         self.user_col.update_one({'id': u.id}, {"$set": asdict(u)}, upsert=True)
 
     def insert_message(self, m: Message):
-        self.message_col.update({'group_id': m.group_id, 'id': m.id}, {"$set": asdict(m)}, upsert=True)
+        self.message_col.update({'id': m.id, 'message_id': m.message_id}, {"$set": asdict(m)}, upsert=True)
 
     def insert_channel(self, ch: Channel):
         self.channel_col.update({'id': ch.id}, {"$set": asdict(ch)}, upsert=True)

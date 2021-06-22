@@ -90,7 +90,7 @@
 							<span class="title">{{ day }} <span class="count">({{ dayline[m.date.strftime("%Y-%m-%d")].count }} messages)</span></span>
 						</li>
 					{% endif %}
-					<li class="message type-{{ m.action }}" id="{{ m.id }}">
+					<li class="message type-{{ m.action }}" id="{{ m.message_id }}">
 						<div class="avatar">
 							{% if m.user.avatar %}
 								<img src="{{ config.media_dir }}/{{ m.user.avatar }}" alt="" />
@@ -121,7 +121,7 @@
 									<a class="reply" href="{{ page_ids[m.reply_to] }}#{{ m.reply_to }}">↶ Reply to #{{ m.reply_to }}</a>
 								{% endif %}
 
-								<a class="id" href="#{{ m.id }}">#{{ m.id }}</a>
+								<a class="id" href="#{{ m.message_id }}">#{{ m.message_id }}</a>
 
 								{% if m.user.tags %}
 									{% for t in m.user.tags %}

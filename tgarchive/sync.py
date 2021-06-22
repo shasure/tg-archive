@@ -152,7 +152,7 @@ class Sync:
                         break
 
                 if has:
-                    last_id = m.id
+                    last_id = m.message_id
                     logging.info("fetched {} messages. sleeping for {} seconds".format(
                         n, self.config["fetch_wait"]))
                     time.sleep(self.config["fetch_wait"])
@@ -202,9 +202,9 @@ class Sync:
                     action = Action(type="user_left", to_user=None)
 
             yield Message(
-                group_id=self.group_id,
+                id=self.group_id,
                 action=action,
-                id=m.id,
+                message_id=m.id,
                 date=m.date,
                 edit_date=m.edit_date,
                 content=sticker if sticker else m.raw_text,
