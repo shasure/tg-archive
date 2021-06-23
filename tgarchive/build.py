@@ -1,16 +1,16 @@
-from collections import OrderedDict, deque
 import logging
 import math
 import os
-import pkg_resources
 import re
 import shutil
+from collections import OrderedDict, deque
 
+import pkg_resources
 from feedgen.feed import FeedGenerator
 from jinja2 import Template
+
 from . import _TEMPLATE_HTML, _STATIC, __version__
 from .basedb import *
-
 
 _NL2BR = re.compile(r"\n\n+")
 
@@ -27,10 +27,17 @@ class Build:
         # Map of all message IDs across all months and the slug of the page
         # in which they occur (paginated), used to link replies to their
         # parent messages that may be on arbitrary pages.
+        # should clean these map after build() if build will call many times
         self.page_ids = {}
         self.timeline = OrderedDict()
 
+        self.bp_user_id = None
+
     def build(self):
+        # get backup user if backup
+        if self.config['bp_user']:
+            self.bp_user_id = self.config['bp_user']
+
         # (Re)create the output directory.
         self._create_publish_dir()
 
@@ -38,15 +45,15 @@ class Build:
             group_id = int(self.config['group'])
         except:
             logging.warning("'{}' is username, try to lookup username from db.".format(self.config['group']))
-            group_id = self.db.get_channel_id_by_username(self.config['group'])
+            group_id = self.db.get_channel_id_by_username(self.config['group'], self.bp_user_id)
         if not group_id:
             logging.warning("'{}' not find in database. Please execute sync first.".format(self.config['group']))
             quit(1)
 
-        timeline = list(self.db.get_timeline(group_id))
+        timeline = list(self.db.get_timeline(group_id, self.bp_user_id))
         if len(timeline) == 0:
-            logging.info("no data found to publish site")
-            quit()
+            logging.info("'{}' no data found to publish site".format(group_id))
+            return
 
         for month in timeline:
             if month.date.year not in self.timeline:
@@ -59,18 +66,18 @@ class Build:
         for month in timeline:
             # Get the days + message counts for the month.
             dayline = OrderedDict()
-            for d in self.db.get_dayline(group_id, month.date.year, month.date.month, self.config["per_page"]):
+            for d in self.db.get_dayline(group_id, self.bp_user_id, month.date.year, month.date.month, self.config["per_page"]):
                 dayline[d.slug] = d
 
             # Paginate and fetch messages for the month until the end..
             page = 0
             last_id = 0
             total = self.db.get_message_count(
-                group_id, month.date.year, month.date.month)
+                group_id, self.bp_user_id, month.date.year, month.date.month)
             total_pages = math.ceil(total / self.config["per_page"])
 
             while True:
-                messages = list(self.db.get_messages(group_id, month.date.year, month.date.month,
+                messages = list(self.db.get_messages(group_id, self.bp_user_id, month.date.year, month.date.month,
                                                      last_id, self.config["per_page"]))
 
                 if len(messages) == 0:
@@ -115,6 +122,9 @@ class Build:
         if self.config["publish_rss_feed"]:
             self._build_rss(rss_entries, "index.rss", "index.atom")
 
+        # must clean if build() be called many times
+        self._clean()
+
     def load_template(self, fname):
         if fname:
             template_fn = fname
@@ -138,6 +148,11 @@ class Build:
         return fname
 
     def _render_page(self, messages, month, dayline, fname, page, total_pages):
+        # group id to group name
+        if self.config['group']:
+            res_id = self.db.get_channel_username_by_id(self.config['group'])
+            if res_id:
+                self.config['group'] = res_id
         html = self.template.render(config=self.config,
                                     timeline=self.timeline,
                                     dayline=dayline,
@@ -216,11 +231,10 @@ class Build:
             else:
                 shutil.copytree(f, target_dir)
 
-        # # If media downloading is enabled, copy the media directory.
-        # mediadir = self.config["media_dir"]
-        # if os.path.exists(mediadir):
-        #     shutil.copytree(mediadir, os.path.join(
-        #         pubdir, os.path.basename(mediadir)))
-
         # create media_dir in pubdir
         os.mkdir(os.path.join(pubdir, os.path.basename(self.config["media_dir"])))
+
+    def _clean(self):
+        self.page_ids = {}
+        self.timeline = OrderedDict()
+        self.bp_user_id = None

@@ -31,24 +31,33 @@ class MongoDB(BaseDB):
         self.channel_col = self.db[self.CHANNEL]
         self.user_col = self.db[self.USER]
         self.groupuser_col = self.db[self.GROUPUSER]
+        self.backupuser_col = self.db[self.BACKUPUSER]
         # grid fs
         self.gfs = {BaseDB.MESSAGE: GridFS(self.db, collection=BaseDB.MESSAGE),
                     BaseDB.CHANNEL: GridFS(self.db, collection=BaseDB.CHANNEL),
                     BaseDB.USER: GridFS(self.db, collection=BaseDB.USER),
-                    BaseDB.GROUPUSER: GridFS(self.db, collection=BaseDB.GROUPUSER)}
+                    BaseDB.GROUPUSER: GridFS(self.db, collection=BaseDB.GROUPUSER),
+                    BaseDB.BACKUPUSER: GridFS(self.db, collection=BaseDB.BACKUPUSER)}
 
         self._create_index()
 
     def _create_index(self):
         # unique index
-        self.message_col.create_index([("id", pymongo.ASCENDING), ("message_id", pymongo.ASCENDING)], unique=True)
+        self.message_col.create_index(
+            [("owner_id", pymongo.ASCENDING), ("id", pymongo.ASCENDING), ("message_id", pymongo.ASCENDING),
+             ("user", pymongo.ASCENDING)], unique=True)
         self.user_col.create_index([("id", pymongo.ASCENDING)], unique=True)
         self.channel_col.create_index([("id", pymongo.ASCENDING), ("username", pymongo.ASCENDING)], unique=True)
-        self.groupuser_col.create_index([("group_id", pymongo.ASCENDING), ("user.id", pymongo.ASCENDING)], unique=True)
+        self.groupuser_col.create_index([("group_id", pymongo.ASCENDING), ("user.id", pymongo.ASCENDING), ("user.username", pymongo.ASCENDING)], unique=True)
+        self.backupuser_col.create_index([("id", pymongo.ASCENDING), ("username", pymongo.ASCENDING)], unique=True)
 
-    def get_last_message_id(self, id) -> [int, datetime]:
-        last_message = self.message_col.find({'id': id}, {"message_id": 1, "date": 1}) \
-            .sort([('message_id', pymongo.DESCENDING)]).limit(1)
+    def get_last_message_id(self, id, owner_id=None) -> [int, datetime]:
+        if not owner_id:
+            last_message = self.message_col.find({'id': id}, {"message_id": 1, "date": 1}) \
+                .sort([('message_id', pymongo.DESCENDING)]).limit(1)
+        else:
+            last_message = self.message_col.find({'owner_id': owner_id, 'id': id}, {"message_id": 1, "date": 1}) \
+                .sort([('message_id', pymongo.DESCENDING)]).limit(1)
         last_message_l = list(last_message)
         if not last_message_l:
             return 0, None
@@ -57,13 +66,14 @@ class MongoDB(BaseDB):
         id, date = last_message['message_id'], last_message['date']
         return id, date
 
-    def get_timeline(self, id) -> Iterator[Month]:
+    def get_timeline(self, id, owner_id=None) -> Iterator[Month]:
         """
         Get the list of all unique yyyy-mm month groups and
         the corresponding message counts per period in chronological order.
         """
+        match_dict = {"$match": {"id": id, "owner_id": owner_id}} if owner_id else {"$match": {"id": id}}
         m_cursor = self.message_col.aggregate([
-            {"$match": {"id": id}},
+            match_dict,
             {
                 "$group": {
                     "_id": {
@@ -85,33 +95,34 @@ class MongoDB(BaseDB):
                         label=r['date'].strftime("%b %Y"),
                         count=r['count'])
 
-    def get_dayline(self, id, year, month, limit=500) -> Iterator[Day]:
+    def get_dayline(self, id, owner_id, year, month, limit=500) -> Iterator[Day]:
         """
         Get the list of all unique yyyy-mm-dd days corresponding
         message counts and the page number of the first occurrence of
         the date in the pool of messages for the whole month.
         """
+        and_list = [{"$eq": ["$id", id]},
+                    {"$eq":
+                         ["{}{:02d}".format(year, month),
+                          {
+                              "$dateToString": {
+                                  "date": "$date",
+                                  "format": "%Y%m",
+                                  "timezone": self.db_timezone
+                              }
+                          }]
+                     }]
+        if owner_id:
+            and_list.append({"$eq": ["$owner_id", owner_id]})
         m_curor = self.message_col.aggregate([
-            {"$project": {"date": 1, "_id": 0}},
             {"$match":
                 {
                     "$expr": {
-                        "$and": [
-                            {"id": id},
-                            {"$eq":
-                                 ["{}{:02d}".format(year, month),
-                                  {
-                                      "$dateToString": {
-                                          "date": "$date",
-                                          "format": "%Y%m",
-                                          "timezone": self.db_timezone
-                                      }
-                                  }]
-                             }
-                        ]
+                        "$and": and_list
                     }
                 }
             },
+            {"$project": {"date": 1, "_id": 0}},
             {"$set": {
                 "rank": {
                     "$function": {
@@ -145,27 +156,28 @@ class MongoDB(BaseDB):
                       count=r['count'],
                       page=r['page'])
 
-    def get_messages(self, id, year, month, last_id=0, limit=500) -> Iterator[Message]:
-        # date = "{}{:02d}".format(year, month)
+    def get_messages(self, id, owner_id, year, month, last_id=0, limit=500) -> Iterator[Message]:
+        and_list = [
+            {"$eq": ["$id", id]},
+            {"$eq":
+                 ["{}{:02d}".format(year, month),
+                  {
+                      "$dateToString": {
+                          "date": "$date",
+                          "format": "%Y%m",
+                          "timezone": self.db_timezone
+                      }
+                  }]
+             },
+            {"$gt": ["$message_id", last_id]}]
+        if owner_id:
+            and_list.append({"$eq": ["$owner_id", owner_id]})
 
         m_cursor = self.message_col.aggregate([
             {"$match":
                 {
                     "$expr": {
-                        "$and": [
-                            {"$eq": ["$id", id]},
-                            {"$eq":
-                                 ["{}{:02d}".format(year, month),
-                                  {
-                                      "$dateToString": {
-                                          "date": "$date",
-                                          "format": "%Y%m",
-                                          "timezone": self.db_timezone
-                                      }
-                                  }]
-                             },
-                            {"$gt": ["$message_id", last_id]}
-                        ]
+                        "$and": and_list
                     }
                 }
             },
@@ -191,26 +203,28 @@ class MongoDB(BaseDB):
         for r in m_cursor:
             yield self._make_message(r)
 
-    def get_message_count(self, id, year, month) -> int:
+    def get_message_count(self, id, owner_id, year, month) -> int:
         date = "{}{:02d}".format(year, month)
+
+        and_list = [{"$eq": ["$id", id]},
+                    {"$eq":
+                         [date,
+                          {
+                              "$dateToString": {
+                                  "date": "$date",
+                                  "format": "%Y%m",
+                                  "timezone": self.db_timezone
+                              }
+                          }]
+                     }]
+        if owner_id:
+            and_list.append({"$eq": ["$owner_id", owner_id]})
 
         m_cursor = self.message_col.aggregate([
             {"$match":
                 {
                     "$expr": {
-                        "$and": [
-                            {"id": id},
-                            {"$eq":
-                                 [date,
-                                  {
-                                      "$dateToString": {
-                                          "date": "$date",
-                                          "format": "%Y%m",
-                                          "timezone": self.db_timezone
-                                      }
-                                  }]
-                             }
-                        ]
+                        "$and": and_list
                     }
                 }
             },
@@ -222,9 +236,9 @@ class MongoDB(BaseDB):
 
         return list(m_cursor)[0]['count']
 
-    def insert_user(self, u: User):
+    def insert_user(self, u: User, col=BaseDB.USER):
         """Insert a user and if they exist, update the fields."""
-        self.user_col.update_one({'id': u.id}, {"$set": asdict(u)}, upsert=True)
+        self.db[col].update_one({'id': u.id}, {"$set": asdict(u)}, upsert=True)
 
     def insert_message(self, m: Message):
         self.message_col.update({'id': m.id, 'message_id': m.message_id}, {"$set": asdict(m)}, upsert=True)
@@ -289,8 +303,8 @@ class MongoDB(BaseDB):
         except:
             raise
 
-    def check_user_exists(self, uid):
-        user_iter = self.user_col.find({'id': uid})
+    def check_user_exists(self, uid, col=BaseDB.USER):
+        user_iter = self.db[col].find({'id': uid})
         user = list(user_iter)
         if user:
             return True
@@ -310,6 +324,13 @@ class MongoDB(BaseDB):
             return channel[0]['id']
         return None
 
+    def get_channel_username_by_id(self, id):
+        channel_iter = self.channel_col.find({'id': id})
+        channel = list(channel_iter)
+        if channel:
+            return channel[0]['username']
+        return None
+
     def query_channel_by_id(self, ch_id):
         channel_iter = self.channel_col.find({'id': ch_id}, {"_id": 0})
         return channel_iter
@@ -318,4 +339,25 @@ class MongoDB(BaseDB):
         user_iter = self.groupuser_col.find({'group_id': ch_id}, {"_id": 0})
         return user_iter
 
+    def check_backupuser_exists(self, uid):
+        bp_user_iter = self.backupuser_col.find({'id': uid})
+        bp_user = list(bp_user_iter)
+        if bp_user:
+            return True
+        return False
+
+    def get_bpuser_id_by_username(self, bp_username):
+        bp_user_iter = self.backupuser_col.find({'username': bp_username})
+        bp_user = list(bp_user_iter)
+        if bp_user:
+            return bp_user[0]['id']
+        return None
+
+    def get_chat_id_by_owner_id(self, owner_id):
+        id_list = self.message_col.distinct('id', {'owner_id': owner_id})
+        return list(id_list)
+
+    def get_group_id_by_owner_id(self, user_id):
+        id_list = self.groupuser_col.distinct('group_id', {'user.id': user_id})
+        return list(id_list)
 

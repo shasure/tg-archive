@@ -64,7 +64,8 @@ class Media:
 
 @dataclass
 class Message:
-    id: int
+    owner_id: int # if message in one to one chat, owner_id will be set as user id of current session
+    id: int  # channel id or chat user id
     message_id: int
     action: Action
     date: datetime.datetime
@@ -92,3 +93,4 @@ class BaseDB:
     CHANNEL = 'channel'
     USER = 'user'
     GROUPUSER = 'groupuser'
+    BACKUPUSER = 'backupuser'

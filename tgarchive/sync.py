@@ -1,23 +1,17 @@
+import json
+import logging
+import time
 from collections import defaultdict
 from io import BytesIO
 from sys import exit
-import json
-import logging
-import os
-import re
-import tempfile
-import shutil
-import time
 
-from jinja2 import Template
+import telethon.tl.types
 from PIL import Image
 from telethon.errors import FloodWaitError
 from telethon.sync import TelegramClient
-import telethon.tl.types
 from telethon.tl import functions
-from telethon.tl.types import ChannelParticipantAdmin, ChannelParticipantCreator, InputPeerUser
+from telethon.tl.types import ChannelParticipantAdmin, ChannelParticipantCreator, InputPeerChannel
 
-from . import basedb
 from .basedb import BaseDB, Action, User, Message, Media, Channel, GroupUser
 
 
@@ -73,57 +67,74 @@ class SyncUtils:
 
         return fname if f_id else None
 
+    def get_and_insert_user(self, u, user_col=BaseDB.USER) -> int:
+        # check if user in db
+        if self.db.check_user_exists(u.id, user_col):
+            return u.id
+        user = self.get_user(u, user_col)
+        self.db.insert_user(user, user_col)
+        return u.id
+
 
 class Sync:
     """
-    Sync iterates and receives messages from the Telegram group to DB.
+    Sync iterates and receives messages from the Telegram group / one to one chat to DB.
     """
 
     def __init__(self, config, session_file, db):
         self.config = config
         self.db = db
         self.group_id = None
+        self.is_chat = None  # config['group'] is chat or not
 
         self.client = TelegramClient(
             session_file, self.config["api_id"], self.config["api_hash"])
         self.client.start()
 
         self.sync_utils = SyncUtils(self.config, self.client, self.db)
+        # get 'me'
+        self.me = self.client.get_me()
 
-    def sync(self, ids=None):
+    def sync(self, ids=None, add_me=False):
         """
         Sync syncs messages from Telegram from the last synced message
         into the local SQLite DB.
         """
+        self.is_chat = None  # reset
         # get group_id
         self.group_id = self._get_group_id(self.config["group"])
 
         # check if group_id
         entity = self.client.get_input_entity(self.group_id)
-        if isinstance(entity, InputPeerUser):
-            logging.warning("'{}' is not a group id. Skip.".format(self.group_id))
-            return
+        # if group_id is one to one chat
+        if not isinstance(entity, InputPeerChannel):
+            logging.warning("'{}' is not a group id.".format(self.group_id))
+            self.is_chat = True
 
-        # first sync channel info
-        logging.info("start fetching '{}' channel info...".format(self.config["group"]))
-        channel_sync = ChannelSync(self.client, self.group_id, self.db)
-        channel_sync.sync()
+        # if channel, first sync channel info
+        if not self.is_chat:
+            logging.info("start fetching '{}' channel info...".format(self.config["group"]))
+            channel_sync = ChannelSync(self.client, self.group_id, self.db)
+            channel_sync.sync()
+
+        if not self.is_chat and self.config['user']:
+            logging.info("start fetching '{}' group user info...".format(self.config["group"]))
+            groupuser_sync = GroupUserSync(self.config, self.client, self.group_id, self.db, self.me)
+            groupuser_sync.sync(add_me)
 
         if ids:
             last_id, last_date = (ids, None)
         else:
-            last_id, last_date = self.db.get_last_message_id(self.group_id)
+            if self.is_chat:
+                last_id, last_date = self.db.get_last_message_id(self.group_id, self.me.id)
+            else:
+                last_id, last_date = self.db.get_last_message_id(self.group_id)
 
         if ids:
             logging.info("fetching message id={}".format(ids))
         elif last_id:
             logging.info("fetching from last message id={} ({})".format(
                 last_id, last_date))
-
-        if self.config['user']:
-            logging.info("start fetching '{}' group user info...".format(self.config["group"]))
-            groupuser_sync = GroupUserSync(self.config, self.client, self.group_id, self.db)
-            groupuser_sync.sync()
 
         if self.config['message']:
             logging.info("start fetching '{}' messages...".format(self.config["group"]))
@@ -195,13 +206,14 @@ class Sync:
                 if isinstance(m.action, telethon.tl.types.MessageActionChatAddUser):
                     if len(m.action.users) == 1 and len(m.action_entities) == 1 and \
                             isinstance(m.action_entities[0], telethon.tl.types.User):
-                        self._get_and_insert_user(m.action_entities[0])
+                        self.sync_utils.get_and_insert_user(m.action_entities[0])
                         action = Action(type="user_joined", to_user=m.action_entities[0].id)
 
                 elif isinstance(m.action, telethon.tl.types.MessageActionChatDeleteUser):
                     action = Action(type="user_left", to_user=None)
 
             yield Message(
+                owner_id=self.me.id if self.is_chat else None,
                 id=self.group_id,
                 action=action,
                 message_id=m.id,
@@ -209,17 +221,9 @@ class Sync:
                 edit_date=m.edit_date,
                 content=sticker if sticker else m.raw_text,
                 reply_to=m.reply_to_msg_id if m.reply_to and m.reply_to.reply_to_msg_id else None,
-                user=self._get_and_insert_user(m.sender),
+                user=self.sync_utils.get_and_insert_user(m.sender),
                 media=med if med else None
             )
-
-    def _get_and_insert_user(self, u) -> int:
-        # check if user in db
-        if self.db.check_user_exists(u.id):
-            return u.id
-        user = self.sync_utils.get_user(u, BaseDB.USER)
-        self.db.insert_user(user)
-        return u.id
 
     def _make_poll(self, msg):
         options = [{"label": a.text, "count": 0, "correct": False}
@@ -347,6 +351,9 @@ class Sync:
         im.thumbnail(self.config["avatar_size"], Image.ANTIALIAS)
         im.save(fname, "JPEG")
 
+    def save_me(self):
+        self.sync_utils.get_and_insert_user(self.me, BaseDB.BACKUPUSER)
+
 
 class ChannelSync:
     def __init__(self, client, group_id, db):
@@ -435,20 +442,26 @@ class ChannelSync:
 
 
 class GroupUserSync:
-    def __init__(self, config, client, group_id, db):
+    def __init__(self, config, client, group_id, db, me):
         self.config = config
         self.client = client
         self.group_id = group_id
         self.db = db
+        self.me = me
         self.sync_utils = SyncUtils(self.config, self.client, self.db)
 
-    def sync(self):
+    def sync(self, add_me=False):
         # 判断是group还是broadcast channel
         full = self.client(functions.channels.GetFullChannelRequest(self.group_id))
         full_channel = full.full_chat  # full_channel is a ChannelFull
         channel = next(c for c in full.chats if c.id == full_channel.id)
         if channel.broadcast:  # 目标是broadcast channel
             logging.info('{}是broadcast channel，订阅人数 {}'.format(self.group_id, full_channel.participants_count))  # subscriber人数
+            if full_channel.can_view_participants:  # get broadcast participants
+                self._get_and_insert_participants(full_channel.participants_count, self.group_id)
+            if add_me:
+                me = self._get_groupuser(self.me)
+                self.db.insert_groupuser(me)
             if full_channel.linked_chat_id:  # 是否有相关联的group
                 linked_group = next(c for c in full.chats if c.id == full_channel.linked_chat_id)
                 logging.info('关联group的title: {}  username: {}'.format(linked_group.title, linked_group.username))
@@ -457,17 +470,24 @@ class GroupUserSync:
                 logging.info('broadcast channel {} 没有相关联的group'.format(self.group_id))
                 return
         elif channel.megagroup:  # 目标是group
-            logging.info('{}是group，group人数 {}'.format(self.group_id, full_channel.participants_count))
+            logging.info('{} 是group，group人数 {}'.format(self.group_id, full_channel.participants_count))
         else:
             raise Exception('{} broadcast megagroup同时为False，请手动检查'.format(self.group_id))
 
-        # 获取members
-        users = self.client.get_participants(self.group_id)  # list of User
+        self._get_and_insert_participants(full_channel.participants_count, self.group_id)
+
+    def _get_and_insert_participants(self, participants_count, gid):
+        if participants_count < 10000:
+            # 获取members
+            users = self.client.get_participants(gid)  # list of User
+        else:
+            logging.info("{} has more than 9999 members. Using User.search method. Please wait.".format(gid))
+            users = self.client.get_participants(gid, aggressive=True)  # list of User
         logging.info('获取member {} 人'.format(len(users)))
 
         # insert to db
         if self.config['groupsuser_remove_before_sync']:
-            self.db.del_groupuser_by_groupid(self.group_id)
+            self.db.del_groupuser_by_groupid(gid)
         for user in users:
             u = self._get_groupuser(user)
             self.db.insert_groupuser(u)
@@ -475,9 +495,9 @@ class GroupUserSync:
     def _get_groupuser(self, u) -> GroupUser:
         creator = None
         admin = None
-        if isinstance(u.participant, ChannelParticipantCreator):  # 是否是创建者
+        if hasattr(u, 'participant') and isinstance(u.participant, ChannelParticipantCreator):  # 是否是创建者
             creator = True
-        if isinstance(u.participant, ChannelParticipantAdmin):  # 是否是admin
+        if hasattr(u, 'participant') and isinstance(u.participant, ChannelParticipantAdmin):  # 是否是admin
             admin = True
 
         user = self.sync_utils.get_user(u, BaseDB.GROUPUSER)

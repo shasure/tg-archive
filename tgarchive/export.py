@@ -1,66 +1,64 @@
 import logging
-from collections import defaultdict
-
-import pandas as pd
 import os
 
 
 class Export:
-    CHANNEL_FILE = "channel.xlsx"
-    GROUPUSER_FILE = "groupuser.xlsx"
-
-    def __init__(self, config, db):
-        self.config = config
-        self.db = db
-        self.publish_dir = self.config['publish_dir']
+    def __init__(self, build):
+        self.build = build
+        self.publish_dir = self.build.config['publish_dir']
+        self.chat_list = None
+        self.channel_list = None
         if not os.path.exists(self.publish_dir):
             os.mkdir(self.publish_dir)
 
     def export(self):
-        group_id = None
+        if not self.build.config['bp_user']:
+            logging.warning("backup user to export not specified, please use --bp_user.")
+            quit(1)
+
         try:
-            group_id = int(self.config['group'])
+            bp_user_id = int(self.build.config['bp_user'])
         except:
-            logging.warning("'{} is channel username.'".format(self.config['group']))
-            group_id = self.db.get_channel_id_by_username(self.config['group'])
-            if not group_id:
-                logging.warning("'{} not find in db.'".format(self.config['group']))
+            bp_user_id = self.build.db.get_bpuser_id_by_username(self.build.config['bp_user'])
+            if not bp_user_id:
+                logging.warning("'{}' not exists in backup users.".format(self.build.config['bp_user']))
                 quit(1)
         else:
-            if not self.db.check_channel_exists(self.config['group']):
-                logging.warning("'{} not find in db.'".format(self.config['group']))
+            if not self.build.db.check_backupuser_exists(bp_user_id):
+                logging.warning("'{}' not exists in backup users.".format(self.build.config['bp_user']))
                 quit(1)
 
-        self._export_channel(group_id)
-        self._export_groupuser(group_id)
+        # set bp_user id
+        self.build.config['bp_user'] = bp_user_id
 
-    def _export_channel(self, group_id):
-        ch_list = list(self.db.query_channel_by_id(group_id))
-        if ch_list[0]['linked_chat_id']:
-            group_id = ch_list[0]['linked_chat_id']
-            logging.warning("'{}' is broadcast channel. export linked group channel info.".format(self.config['group']))
-        ch_list.extend(list(self.db.query_channel_by_id(group_id)))
-        df = pd.DataFrame(ch_list)
-        df['channel_create_date'] = df['channel_create_date'].dt.tz_localize(None)
-        df['channel_last_message_date'] = df['channel_last_message_date'].dt.tz_localize(None)
-        fn = os.path.join(self.publish_dir, self.CHANNEL_FILE)
-        df.to_excel(fn, na_rep="", index=False, )
-        logging.info("channel info export to '{}'".format(fn))
+        os.chdir(self.publish_dir)  # change dir
 
-    def _export_groupuser(self, group_id):
-        user_list = []
-        ch_list = list(self.db.query_channel_by_id(group_id))
-        if ch_list[0]['linked_chat_id']:
-            group_id = ch_list[0]['linked_chat_id']
-            logging.warning("'{}' is broadcast channel. export linked group users.".format(self.config['group']))
-        for u in self.db.query_groupuser_by_id(group_id):
-            d = defaultdict()
-            d['group_id'] = u['group_id']
-            d['creator'] = u['creator']
-            d['admin'] = u['admin']
-            d.update(u['user'])
-            user_list.append(d)
-        df = pd.DataFrame(user_list)
-        fn = os.path.join(self.publish_dir, self.GROUPUSER_FILE)
-        df.to_excel(fn, na_rep="", index=False)
-        logging.info("groupuser info export to '{}'".format(fn))
+        if self.build.config['all']:
+            self._export_chat(bp_user_id)
+            self._export_channel(bp_user_id)
+        else:
+            self._export_chat(bp_user_id, self.build.config['group'])
+            self._export_channel(bp_user_id, self.build.config['group'])
+
+    def _export_chat(self, bp_user_id, peer_id=None):
+        self.chat_list = self.build.db.get_chat_id_by_owner_id(bp_user_id)
+        if peer_id and peer_id in self.chat_list:
+            self._build(peer_id)
+        else:
+            for chat_id in self.chat_list:
+                self._build(chat_id)
+
+    def _export_channel(self, bp_user_id, peer_id=None):
+        self.build.config['bp_user'] = None  # unset bp_user
+        self.channel_list = self.build.db.get_group_id_by_owner_id(bp_user_id)
+        if peer_id and peer_id in self.channel_list:
+            self._build(peer_id)
+        else:
+            for chat_id in self.channel_list:
+                self._build(chat_id)
+
+    def _build(self, id):
+        self.build.config['group'] = id
+        self.build.config['publish_dir'] = str(id)
+        self.build.load_template("")
+        self.build.build()
