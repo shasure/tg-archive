@@ -37,8 +37,22 @@ class Export:
             self._export_chat(bp_user_id)
             self._export_channel(bp_user_id)
         else:
-            self._export_chat(bp_user_id, self.build.config['group'])
-            self._export_channel(bp_user_id, self.build.config['group'])
+            try:
+                group_id = int(self.build.config['group'])
+            except:
+                logging.warning("'{}' is username, try to lookup username from db.".format(self.build.config['group']))
+                group_id = self.build.db.get_channel_id_by_username(self.build.config['group'])
+            if group_id:
+                self._export_channel(bp_user_id, group_id)
+                return
+            else:
+                logging.warning("'{}' not channel. ".format(self.build.config['group']))
+            if not group_id:
+                group_id = self.build.db.check_chat_id_exists_by_owner_id(group_id)
+            if not group_id:
+                logging.warning("'{}' not chat. ".format(self.build.config['group']))
+                quit(1)
+            self._export_chat(bp_user_id, group_id)
 
     def _export_chat(self, bp_user_id, peer_id=None):
         self.chat_list = self.build.db.get_chat_id_by_owner_id(bp_user_id)

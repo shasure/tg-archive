@@ -35,7 +35,7 @@ class Build:
 
     def build(self):
         # get backup user if backup
-        if self.config['bp_user']:
+        if hasattr(self.config, 'bp_user') and self.config['bp_user']:
             self.bp_user_id = self.config['bp_user']
 
         # (Re)create the output directory.
@@ -45,7 +45,7 @@ class Build:
             group_id = int(self.config['group'])
         except:
             logging.warning("'{}' is username, try to lookup username from db.".format(self.config['group']))
-            group_id = self.db.get_channel_id_by_username(self.config['group'], self.bp_user_id)
+            group_id = self.db.get_channel_id_by_username(self.config['group'])
         if not group_id:
             logging.warning("'{}' not find in database. Please execute sync first.".format(self.config['group']))
             quit(1)

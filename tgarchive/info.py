@@ -39,7 +39,7 @@ class Info:
         if ch_list[0]['linked_chat_id']:
             group_id = ch_list[0]['linked_chat_id']
             logging.warning("'{}' is broadcast channel. export linked group channel info.".format(self.config['group']))
-        ch_list.extend(list(self.db.query_channel_by_id(group_id)))
+            ch_list.extend(list(self.db.query_channel_by_id(group_id)))
         df = pd.DataFrame(ch_list)
         df['channel_create_date'] = df['channel_create_date'].dt.tz_localize(None)
         df['channel_last_message_date'] = df['channel_last_message_date'].dt.tz_localize(None)

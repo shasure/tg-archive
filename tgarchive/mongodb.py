@@ -357,6 +357,13 @@ class MongoDB(BaseDB):
         id_list = self.message_col.distinct('id', {'owner_id': owner_id})
         return list(id_list)
 
+    def check_chat_id_exists_by_owner_id(self, owner_id, id):
+        res_list = self.message_col.find({'owner_id': owner_id, 'id': id})
+        res_list = list(res_list)
+        if res_list:
+            return True
+        return None
+
     def get_group_id_by_owner_id(self, user_id):
         id_list = self.groupuser_col.distinct('group_id', {'user.id': user_id})
         return list(id_list)

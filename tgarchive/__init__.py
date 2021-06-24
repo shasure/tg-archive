@@ -140,6 +140,8 @@ def main():
             logging.error("unable to find bundled example directory")
             quit(1)
 
+        if args.path and not os.path.exists(args.path):
+            os.mkdir(args.path)
         dst_fp = os.path.join(args.path, _CONFIG_YAML) if args.path else _CONFIG_YAML
         if os.path.exists(dst_fp):
             logging.error("file {} already exists.".format(dst_fp))
